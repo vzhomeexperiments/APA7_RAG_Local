@@ -2,20 +2,21 @@
 import shutil
 import tempfile
 import time
+import uuid
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict
 
 import docx
 import pymupdf4llm
 import arxiv
 import requests
 from dotenv import load_dotenv
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi.responses import FileResponse, JSONResponse
 
 from openai import OpenAI
 
-# --- SETTINGS ---
+# --- ENV & OPENAI SETUP ---
 env_path = Path(__file__).parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
@@ -23,13 +24,14 @@ API_KEY = os.getenv("OPENAI_API_KEY")
 if not API_KEY:
     raise RuntimeError("CRITICAL ERROR: OPENAI_API_KEY not found in .env file.")
 
-# Initialize OpenAI client
 client = OpenAI(api_key=API_KEY)
 
-# Fallback model (lighter, cheaper)
 FALLBACK_MODEL = "gpt-4o-mini"
 
-app = FastAPI(title="Next-Gen APA Generator")
+app = FastAPI(title="Next-Gen APA Generator with BibTeX")
+
+# In-memory session store: session_id -> {"docx_path": ..., "bib_path": ...}
+SESSION_STORE: Dict[str, Dict[str, str]] = {}
 
 
 def extract_markdown_from_pdf(file_path: str) -> str:
@@ -46,7 +48,7 @@ def extract_markdown_from_pdf(file_path: str) -> str:
 
 def generate_citation_with_retry(combined_text: str, model_id: str, retries: int = 2) -> str:
     """
-    Try generating citations with the requested model.
+    Generate APA 7 citations from combined text using the requested model.
     On certain errors, fall back to a lighter model.
     """
     prompt = (
@@ -65,7 +67,6 @@ def generate_citation_with_retry(combined_text: str, model_id: str, retries: int
     )
 
     print(f"🤖 Sending request to model: {model_id}")
-
     current_model = model_id
 
     for attempt in range(retries):
@@ -85,14 +86,11 @@ def generate_citation_with_retry(combined_text: str, model_id: str, retries: int
             error_msg = str(e)
             print(f"⚠️ Error ({current_model}): {error_msg}")
 
-            # If model is not found or access is forbidden, fall back
             if "404" in error_msg or "not found" in error_msg.lower() or "403" in error_msg:
                 if current_model != FALLBACK_MODEL:
                     print(f"🔄 Model not available. Falling back to '{FALLBACK_MODEL}'...")
                     current_model = FALLBACK_MODEL
                     continue
-
-            # If rate limit / quota issues, wait and retry, then fall back if needed
             elif "429" in error_msg or "rate limit" in error_msg.lower():
                 wait_time = 10
                 print(f"⏳ Rate limit hit. Waiting {wait_time} seconds...")
@@ -101,22 +99,35 @@ def generate_citation_with_retry(combined_text: str, model_id: str, retries: int
                     print(f"🔄 Still limited, trying lighter model '{FALLBACK_MODEL}'.")
                     current_model = FALLBACK_MODEL
                     continue
-
             else:
-                # Unexpected critical error
                 raise HTTPException(status_code=500, detail=f"LLM Error: {error_msg}")
 
     raise HTTPException(status_code=429, detail="Service is temporarily unavailable, please try again later.")
 
 
-def cleanup_temp_file(path: str):
-    """Delete a temporary file after it has been sent."""
-    try:
-        if os.path.exists(path):
-            os.remove(path)
-            print(f"🧹 Cleaned up: {path}")
-    except Exception as e:
-        print(f"Cleanup warning: {e}")
+def generate_bibtex_from_apa(apa_citations: str, model_id: str) -> str:
+    """
+    Convert APA 7 citations into BibTeX using the LLM.
+    """
+    prompt = (
+        "Convert the following APA 7 citations into valid BibTeX entries.\n"
+        "Requirements:\n"
+        "- Output ONLY BibTeX entries, no explanations.\n"
+        "- Use stable citation keys (e.g., firstauthor_year_titleword).\n"
+        "- Preserve DOIs, URLs, and arXiv IDs when present.\n\n"
+        f"{apa_citations}"
+    )
+
+    response = client.chat.completions.create(
+        model=model_id,
+        messages=[
+            {"role": "system", "content": "You convert APA citations to valid BibTeX entries."},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.1,
+    )
+    text = response.choices[0].message.content or ""
+    return text.strip()
 
 
 def add_arxiv_papers_to_corpus(
@@ -140,10 +151,8 @@ def add_arxiv_papers_to_corpus(
         )
 
         for result in search.results():
-            # Download PDF
             pdf_path = os.path.join(temp_dir, f"{result.get_short_id()}.pdf")
             try:
-                # arxiv library has a built-in download method, but we can also use requests
                 pdf_url = result.pdf_url
                 r = requests.get(pdf_url, timeout=60)
                 r.raise_for_status()
@@ -169,20 +178,21 @@ def add_arxiv_papers_to_corpus(
     return combined_prompt_text
 
 
-@app.post("/generate-bibliography/")
-async def generate_bibliography(
-    background_tasks: BackgroundTasks,
+@app.post("/prepare-bibliography/")
+async def prepare_bibliography(
     files: list[UploadFile] = File(...),
     model_id: str = Form(...),
     arxiv_query: Optional[str] = Form(None),
     arxiv_max_results: int = Form(0),
 ):
     """
-    Main endpoint:
-    - Accepts uploaded PDF files.
-    - Optionally searches arXiv and adds matching papers.
-    - Sends combined text to the LLM to generate APA 7 citations.
-    - Returns a Word document with the bibliography.
+    Prepare bibliography once:
+    - Process uploaded PDFs
+    - Optionally fetch and add arXiv papers
+    - Generate APA 7 citations
+    - Generate BibTeX from APA
+    - Store both as temp files
+    - Return a session_id for later download
     """
     temp_dir = tempfile.mkdtemp()
 
@@ -199,7 +209,7 @@ async def generate_bibliography(
             if text:
                 combined_prompt_text += f"--- SOURCE: {file.filename} ---\n{text[:5000]}\n\n"
 
-        # 2. Optionally add arXiv papers to the corpus
+        # 2. Optionally add arXiv papers
         combined_prompt_text = add_arxiv_papers_to_corpus(
             temp_dir=temp_dir,
             combined_prompt_text=combined_prompt_text,
@@ -208,42 +218,88 @@ async def generate_bibliography(
         )
 
         if not combined_prompt_text:
+            shutil.rmtree(temp_dir)
             raise HTTPException(status_code=400, detail="No readable text found in PDFs or arXiv results.")
 
-        # 3. Generate citations with the LLM
-        citations = generate_citation_with_retry(combined_prompt_text, model_id)
+        # 3. Generate APA citations
+        apa_citations = generate_citation_with_retry(combined_prompt_text, model_id)
 
-        # 4. Create a Word document with the bibliography
+        # 4. Generate BibTeX from APA
+        bibtex_entries = generate_bibtex_from_apa(apa_citations, model_id)
+
+        # 5. Create Word document with APA references
         doc = docx.Document()
         doc.add_heading("References (APA 7)", 0)
-
-        # Each citation on a separate paragraph for easier editing
-        for line in citations.splitlines():
+        for line in apa_citations.splitlines():
             line = line.strip()
             if line:
                 doc.add_paragraph(line)
-
         doc.add_paragraph(f"\n(Generated with model: {model_id})")
 
-        # Save the document to a secure temporary file
-        fd, output_path = tempfile.mkstemp(suffix=".docx")
-        os.close(fd)
-        doc.save(output_path)
+        fd_docx, docx_path = tempfile.mkstemp(suffix=".docx")
+        os.close(fd_docx)
+        doc.save(docx_path)
 
-        # 5. Cleanup and response
-        shutil.rmtree(temp_dir)
-        background_tasks.add_task(cleanup_temp_file, output_path)
+        # 6. Create BibTeX file
+        fd_bib, bib_path = tempfile.mkstemp(suffix=".bib")
+        os.close(fd_bib)
+        with open(bib_path, "w", encoding="utf-8") as f:
+            f.write(bibtex_entries)
 
-        return FileResponse(
-            path=output_path,
-            filename="references_apa7.docx",
-            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        )
+        # 7. Store session
+        session_id = str(uuid.uuid4())
+        SESSION_STORE[session_id] = {
+            "docx_path": docx_path,
+            "bib_path": bib_path,
+            "temp_dir": temp_dir,
+        }
+
+        return JSONResponse({"session_id": session_id})
 
     except Exception as e:
         if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir)
         raise e
+
+
+@app.get("/download/apa/{session_id}")
+async def download_apa(session_id: str):
+    """
+    Download APA 7 Word document for a given session.
+    """
+    session = SESSION_STORE.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found.")
+
+    docx_path = session.get("docx_path")
+    if not docx_path or not os.path.exists(docx_path):
+        raise HTTPException(status_code=404, detail="APA file not found.")
+
+    return FileResponse(
+        path=docx_path,
+        filename="references_apa7.docx",
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+
+
+@app.get("/download/bibtex/{session_id}")
+async def download_bibtex(session_id: str):
+    """
+    Download BibTeX file for a given session.
+    """
+    session = SESSION_STORE.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found.")
+
+    bib_path = session.get("bib_path")
+    if not bib_path or not os.path.exists(bib_path):
+        raise HTTPException(status_code=404, detail="BibTeX file not found.")
+
+    return FileResponse(
+        path=bib_path,
+        filename="references.bib",
+        media_type="application/x-bibtex",
+    )
 
 
 if __name__ == "__main__":

@@ -1,24 +1,26 @@
 ﻿import streamlit as st
 import requests
 
-# SETTINGS
-BACKEND_URL = "http://127.0.0.1:8001/generate-bibliography/"
+BACKEND_BASE_URL = "http://127.0.0.1:8001"
 
 st.set_page_config(page_title="APA 7 - Next Gen AI", page_icon="🧬", layout="wide")
 
 st.title("🧬 Next-Generation APA 7 Bibliography Assistant")
 st.markdown(
     """
-This tool helps you generate **APA 7** references from your PDFs and from **arXiv** papers.
+This tool helps you generate **APA 7** references and **BibTeX** from:
 
-1. Upload your local PDFs (articles, reports, preprints).
-2. Optionally specify an **arXiv search query** to automatically include relevant papers.
-3. Choose an OpenAI model.
-4. Download a ready-to-edit **Word file** with your references.
+- Your local PDF files
+- arXiv search results
+- OpenAI GPT models
+
+You get:
+- A ready-to-use **Word (.docx)** bibliography
+- A **BibTeX (.bib)** file for Zotero, Mendeley, LaTeX, etc.
 """
 )
 
-# --- SIDEBAR: MODEL & ARXIV SETTINGS ---
+# --- SIDEBAR: MODEL & arXiv SETTINGS ---
 with st.sidebar:
     st.header("🧠 Model & arXiv Settings")
 
@@ -27,7 +29,7 @@ with st.sidebar:
         options=[
             "gpt-4.1",
             "gpt-4o",
-            "gpt-4o-mini",   # good default / fallback
+            "gpt-4o-mini",
             "gpt-4.1-mini",
         ],
         index=2,
@@ -39,7 +41,7 @@ with st.sidebar:
     st.subheader("🔎 arXiv Integration")
     arxiv_query = st.text_input(
         "arXiv search query (optional):",
-        help="Example: 'large language models for scientific writing' or 'quantum error correction'.",
+        help="Example: 'photobiomodulation Alzheimer's', 'UV irradiation mushrooms vitamin D2', etc.",
     )
     arxiv_max_results = st.number_input(
         "Max arXiv results to include:",
@@ -72,55 +74,102 @@ with col2:
     st.write("### ⚙️ Processing Panel")
     if uploaded_files:
         st.success(f"{len(uploaded_files)} file(s) ready.")
-        process_btn = st.button("Generate APA 7 Bibliography ⚡", type="primary", use_container_width=True)
+        process_btn = st.button("Prepare Bibliography (APA + BibTeX) ⚡", type="primary", use_container_width=True)
     else:
         st.info("Waiting for PDF files...")
         process_btn = False
 
+# Session state to hold generated files
+if "apa_bytes" not in st.session_state:
+    st.session_state["apa_bytes"] = None
+if "bib_bytes" not in st.session_state:
+    st.session_state["bib_bytes"] = None
+
 if process_btn and uploaded_files:
-    with st.spinner(f"🚀 Running model {selected_model} (fallback: gpt-4o-mini)..."):
+    with st.spinner(f"🚀 Preparing bibliography with model {selected_model}..."):
         try:
-            # 1. Prepare files payload
             files_payload = [
                 ("files", (file.name, file.getvalue(), "application/pdf"))
                 for file in uploaded_files
             ]
 
-            # 2. Prepare form data payload
             data_payload = {
                 "model_id": selected_model,
                 "arxiv_query": arxiv_query,
                 "arxiv_max_results": int(arxiv_max_results),
             }
 
-            # 3. Send request to backend
-            response = requests.post(
-                BACKEND_URL,
+            # 1. Call prepare endpoint
+            prepare_url = f"{BACKEND_BASE_URL}/prepare-bibliography/"
+            resp = requests.post(
+                prepare_url,
                 files=files_payload,
                 data=data_payload,
-                timeout=300,  # allow more time for arXiv + LLM
+                timeout=600,
             )
 
-            # 4. Handle response
-            if response.status_code == 200:
-                st.balloons()
-                st.success("✅ Bibliography generated successfully!")
-
-                st.download_button(
-                    label="📥 Download APA 7 Word file",
-                    data=response.content,
-                    file_name=f"references_{selected_model}.docx",
-                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    use_container_width=True,
-                )
-            else:
-                st.error(f"⚠️ Error: {response.status_code}")
+            if resp.status_code != 200:
+                st.error(f"⚠️ Error from backend: {resp.status_code}")
                 try:
-                    st.json(response.json())
+                    st.json(resp.json())
                 except Exception:
-                    st.write(response.text)
+                    st.write(resp.text)
+            else:
+                data = resp.json()
+                session_id = data.get("session_id")
+                if not session_id:
+                    st.error("No session_id returned from backend.")
+                else:
+                    # 2. Download APA
+                    apa_url = f"{BACKEND_BASE_URL}/download/apa/{session_id}"
+                    apa_resp = requests.get(apa_url, timeout=300)
+                    if apa_resp.status_code == 200:
+                        st.session_state["apa_bytes"] = apa_resp.content
+                    else:
+                        st.error("Failed to download APA Word file.")
+
+                    # 3. Download BibTeX
+                    bib_url = f"{BACKEND_BASE_URL}/download/bibtex/{session_id}"
+                    bib_resp = requests.get(bib_url, timeout=300)
+                    if bib_resp.status_code == 200:
+                        st.session_state["bib_bytes"] = bib_resp.content
+                    else:
+                        st.error("Failed to download BibTeX file.")
+
+                    if st.session_state["apa_bytes"] and st.session_state["bib_bytes"]:
+                        st.balloons()
+                        st.success("✅ Bibliography prepared successfully! You can now download APA + BibTeX.")
 
         except requests.exceptions.ConnectionError:
             st.error("🚨 Cannot reach backend! Is 'main.py' running in the terminal?")
         except Exception as e:
             st.error(f"Unexpected error: {e}")
+
+st.markdown("---")
+st.subheader("📥 Downloads")
+
+col_apa, col_bib = st.columns(2)
+
+with col_apa:
+    if st.session_state["apa_bytes"]:
+        st.download_button(
+            label="📥 Download APA 7 Word file",
+            data=st.session_state["apa_bytes"],
+            file_name="references_apa7.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            use_container_width=True,
+        )
+    else:
+        st.info("APA 7 Word file not available yet.")
+
+with col_bib:
+    if st.session_state["bib_bytes"]:
+        st.download_button(
+            label="📥 Download BibTeX (.bib)",
+            data=st.session_state["bib_bytes"],
+            file_name="references.bib",
+            mime="application/x-bibtex",
+            use_container_width=True,
+        )
+    else:
+        st.info("BibTeX file not available yet.")

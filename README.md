@@ -1,9 +1,17 @@
-Here you go, Vladimir — a clean, modern **README.md** fully aligned with your new OpenAI‑powered architecture, arXiv integration, and a smooth `uv`‑based setup. I’ve also added **desktop launcher scripts** (start/stop) so you can run the whole system like a local research app.
+# ⚡ AI‑Powered APA 7 + BibTeX Generator  
+*A research‑grade citation assistant for PDFs + arXiv*
+
+- **OpenAI-powered backend**
+- **arXiv integration**
+- **APA + BibTeX generation**
+- **Pattern B1‑B (prepare once → download twice)**
+- **uv‑based setup**
+- **Desktop launchers for Windows/macOS/Linux**
+
+It’s written to feel professional, research‑ready, and easy for collaborators to follow.
 
 ---
 
-# ⚡ AI‑Powered APA 7 Bibliography Generator (OpenAI + arXiv)
-`https://github.com/user-attachments/assets/2fa19dc2-3b2e-44da-abc0-2c9dd3d85a43`
 
 `https://img.shields.io/badge/Python-3.10%2B-blue`
 `https://img.shields.io/badge/FastAPI-Backend-green`
@@ -11,50 +19,42 @@ Here you go, Vladimir — a clean, modern **README.md** fully aligned with your 
 `https://img.shields.io/badge/OpenAI-API-black`
 `https://img.shields.io/badge/arXiv-Integrated-orange`
 
-A next‑generation academic assistant that generates **APA 7 citations** from:
+This project provides a **next‑generation citation workflow** for researchers.  
+Upload your PDFs, optionally search arXiv, and generate:
 
-- **Uploaded PDF research papers**
-- **arXiv papers fetched automatically via search**
-- **OpenAI GPT‑4.1 / GPT‑4o / GPT‑4o‑mini models**
+- **APA 7 Word (.docx)** bibliography  
+- **BibTeX (.bib)** file for Zotero, Mendeley, EndNote, LaTeX  
 
-Built with a clean **microservice architecture**:
-
-- **Backend:** FastAPI (PDF extraction, arXiv ingestion, LLM citation generation)  
-- **Frontend:** Streamlit (UI for uploads, arXiv search, model selection)
-
-Perfect for **scientific writing**, **research workflows**, and **rapid literature processing**.
+All powered by **OpenAI GPT‑4 models** and a clean **microservice architecture**.
 
 ---
 
 # 🚀 Features
 
-### 🔍 Hybrid Corpus (PDFs + arXiv)
-Upload your own PDFs **and** automatically fetch arXiv papers by keyword.
+### 🧠 OpenAI‑Powered Citation Generation
+- APA 7 formatting  
+- BibTeX conversion  
+- Automatic fallback to lightweight models  
 
-### 🧠 OpenAI Model Support
-Choose from:
-- `gpt-4.1`
-- `gpt-4o`
-- `gpt-4o-mini` (default)
-- `gpt-4.1-mini`
+### 📚 Hybrid Corpus (PDFs + arXiv)
+- Upload any number of PDFs  
+- Add arXiv papers via keyword search  
+- Extracts text using `pymupdf4llm`  
 
-Automatic fallback to lightweight models if needed.
-
-### 📚 APA 7 Citation Generator
-- One citation per line  
-- No hallucinated metadata  
-- Uses “n.d.” or “Unknown” when fields are missing  
-- Alphabetically sorted when possible  
-
-### 🧩 RAG‑Ready PDF Extraction
-Uses `pymupdf4llm` for robust extraction of academic PDFs.
+### 🧩 Microservice Architecture
+- **Backend:** FastAPI  
+- **Frontend:** Streamlit  
+- **Pattern B1‑B:**  
+  - One “prepare” call  
+  - Two download endpoints (APA + BibTeX)  
+  - Only **one** LLM call → faster, cheaper, consistent  
 
 ### 🖥️ Desktop Launchers
-Start/stop the entire application with simple scripts.
+Start/stop the entire application with one click (Windows/macOS/Linux).
 
 ---
 
-# 🛠️ Setup (using **uv**, recommended)
+# 🛠️ Installation (using `uv` — recommended)
 
 This project is optimized for **uv**, the ultra‑fast Python package manager.
 
@@ -64,12 +64,13 @@ git clone https://github.com/Aylinee/APA7_RAG_Local
 cd APA7_RAG_Local
 ```
 
-## 2. Create the environment
+## 2. Create a virtual environment
 ```bash
 uv venv
 ```
 
 ## 3. Activate the environment
+
 **macOS / Linux**
 ```bash
 source .venv/bin/activate
@@ -96,7 +97,7 @@ OPENAI_API_KEY=your_openai_api_key_here
 
 # ▶️ Running the Application
 
-You need **two terminals** (or use the desktop launchers below).
+You need **two terminals**, or use the launchers below.
 
 ---
 
@@ -126,57 +127,100 @@ http://localhost:8501
 
 ---
 
-# 🖥️ Desktop Launchers (macOS/Linux/Windows)
+# 🧪 How It Works
 
-These scripts let you start/stop the entire system like a desktop app.
+### 1. Upload PDFs  
+### 2. (Optional) Enter arXiv search query  
+### 3. Click **Prepare Bibliography**  
+Backend will:
+- Extract text from PDFs  
+- Fetch arXiv papers  
+- Generate APA citations  
+- Convert APA → BibTeX  
+- Store both files under a `session_id`  
+
+### 4. Download:
+- **APA 7 Word file**  
+- **BibTeX file**  
 
 ---
 
-## **start_app.sh** (macOS/Linux)
+# 🖥️ Desktop Launchers
+
+These scripts let you start/stop the app like a desktop program.
+
+---
+
+## Windows — `start_app.bat`
+
+```bat
+@echo off
+echo Starting APA7 RAG Application...
+
+set BASE_DIR=%USERPROFILE%\Documents\GitHub\APA7_RAG_Local
+
+start "APA7 Backend" cmd /k "cd /d %BASE_DIR%\backend && uv run python main.py"
+start "APA7 Frontend" cmd /k "cd /d %BASE_DIR%\frontend && uv run streamlit run app.py"
+
+echo Application started.
+```
+
+---
+
+## Windows — `stop_app.bat`
+
+```bat
+@echo off
+echo Stopping APA7 RAG Application...
+
+for /f "tokens=2 delims=," %%a in ('tasklist /v /fo csv ^| findstr /i "APA7 Backend"') do taskkill /PID %%a /F
+for /f "tokens=2 delims=," %%a in ('tasklist /v /fo csv ^| findstr /i "APA7 Frontend"') do taskkill /PID %%a /F
+
+echo Application stopped.
+```
+
+---
+
+## macOS/Linux — `start_app.sh`
 
 ```bash
 #!/bin/bash
 echo "Starting APA7 RAG Application..."
 
-# Start backend
-cd backend
+BASE_DIR="$HOME/Documents/GitHub/APA7_RAG_Local"
+
+cd "$BASE_DIR/backend"
 uv run python main.py &
 BACKEND_PID=$!
-cd ..
 
-# Start frontend
-cd frontend
+cd "$BASE_DIR/frontend"
 uv run streamlit run app.py &
 FRONTEND_PID=$!
-cd ..
 
-echo $BACKEND_PID > backend.pid
-echo $FRONTEND_PID > frontend.pid
+echo $BACKEND_PID > "$BASE_DIR/backend.pid"
+echo $FRONTEND_PID > "$BASE_DIR/frontend.pid"
 
 echo "Application started."
 ```
 
-Make executable:
-```bash
-chmod +x start_app.sh
-```
-
 ---
 
-## **stop_app.sh** (macOS/Linux)
+## macOS/Linux — `stop_app.sh`
 
 ```bash
 #!/bin/bash
 echo "Stopping APA7 RAG Application..."
 
-if [ -f backend.pid ]; then
-    kill $(cat backend.pid)
-    rm backend.pid
+BASE_DIR="$HOME/Documents/GitHub/APA7_RAG_Local"
+
+if [ -f "$BASE_DIR/backend.pid" ]; then
+    kill $(cat "$BASE_DIR/backend.pid")
+    rm "$BASE_DIR/backend.pid"
 fi
 
-if [ -f frontend.pid ]; then
-    kill $(cat frontend.pid)
-    rm frontend.pid
+if [ -f "$BASE_DIR/frontend.pid" ]; then
+    kill $(cat "$BASE_DIR/frontend.pid")
+    rm "$BASE_DIR/frontend.pid"
 fi
 
 echo "Application stopped."
@@ -184,33 +228,6 @@ echo "Application stopped."
 
 ---
 
-## **Windows Start Script (start_app.bat)**
-
-```bat
-@echo off
-echo Starting APA7 RAG Application...
-
-start cmd /k "cd backend && uv run python main.py"
-start cmd /k "cd frontend && uv run streamlit run app.py"
-
-echo Application started.
-```
-
----
-
-## **Windows Stop Script (stop_app.bat)**
-
-```bat
-@echo off
-echo Stopping APA7 RAG Application...
-
-taskkill /IM python.exe /F
-taskkill /IM streamlit.exe /F
-
-echo Application stopped.
-```
-
----
-
 # 📄 License
 MIT License
+
