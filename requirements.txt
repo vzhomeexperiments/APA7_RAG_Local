@@ -2,8 +2,9 @@ fastapi
 uvicorn
 python-multipart
 python-dotenv
-google-genai
+openai
 pymupdf4llm
 python-docx
 streamlit
 requests
+arxiv

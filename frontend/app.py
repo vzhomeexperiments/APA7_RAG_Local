@@ -1,101 +1,126 @@
 ﻿import streamlit as st
 import requests
 
-# AYARLAR
+# SETTINGS
 BACKEND_URL = "http://127.0.0.1:8001/generate-bibliography/"
 
 st.set_page_config(page_title="APA 7 - Next Gen AI", page_icon="🧬", layout="wide")
 
-st.title("🧬 Yeni Nesil Kaynakça Asistanı")
+st.title("🧬 Next-Generation APA 7 Bibliography Assistant")
 st.markdown(
     """
-    Bu sistem **Gemini 2.5 ve 3.0** serisi gelişmiş modelleri kullanır.
-    PDF dosyalarınızı yükleyin, modelinizi seçin ve arkanıza yaslanın.
-    """
+This tool helps you generate **APA 7** references from your PDFs and from **arXiv** papers.
+
+1. Upload your local PDFs (articles, reports, preprints).
+2. Optionally specify an **arXiv search query** to automatically include relevant papers.
+3. Choose an OpenAI model.
+4. Download a ready-to-edit **Word file** with your references.
+"""
 )
 
-# --- SIDEBAR: MODEL SEÇİMİ (GÖRSELDEKİ LİSTE) ---
+# --- SIDEBAR: MODEL & ARXIV SETTINGS ---
 with st.sidebar:
-    st.header("🧠 Model Motoru")
-    
-    # Ekran görüntüsündeki modellere uygun ID listesi
-    selected_model = st.selectbox(
-        "Kullanılacak Modeli Seçin:",
-        options=[
-            "gemini-3.0-flash-preview",   # Gemini 3 Flash Preview
-            "gemini-2.5-pro",             # Gemini 2.5 Pro
-            "gemini-2.5-flash",           # Gemini 2.5 Flash
-            "gemini-2.5-flash-lite",      # Gemini 2.5 Flash-Lite
-            "gemini-2.0-flash",           # Gemini 2.0 Flash
-            "gemini-2.0-flash-lite",      # Gemini 2.0 Flash-Lite (Fallback)
-        ],
-        index=0, # Varsayılan olarak en güçlü/yeni olanı seçelim
-        help="Eğer seçtiğiniz model (örn: Preview) hata verirse, sistem otomatik olarak '2.0-flash-lite' modeline geçecektir."
-    )
-    
-    st.divider()
-    st.success(f"Seçili Motor: **{selected_model}**")
-    st.info("ℹ️ Not: 1.5 serisi modeller bu listeden kaldırılmıştır.")
+    st.header("🧠 Model & arXiv Settings")
 
-# --- ANA EKRAN ---
+    selected_model = st.selectbox(
+        "Select OpenAI model:",
+        options=[
+            "gpt-4.1",
+            "gpt-4o",
+            "gpt-4o-mini",   # good default / fallback
+            "gpt-4.1-mini",
+        ],
+        index=2,
+        help="Choose a model depending on quality vs. speed/cost trade-offs.",
+    )
+
+    st.divider()
+
+    st.subheader("🔎 arXiv Integration")
+    arxiv_query = st.text_input(
+        "arXiv search query (optional):",
+        help="Example: 'large language models for scientific writing' or 'quantum error correction'.",
+    )
+    arxiv_max_results = st.number_input(
+        "Max arXiv results to include:",
+        min_value=0,
+        max_value=50,
+        value=0,
+        step=1,
+        help="Set >0 to automatically fetch and include arXiv papers in the citation corpus.",
+    )
+
+    st.divider()
+    st.success(f"Selected model: **{selected_model}**")
+    if arxiv_query and arxiv_max_results > 0:
+        st.info("arXiv search is enabled and will be added to your corpus.")
+    else:
+        st.info("arXiv search is currently disabled (no query or max results = 0).")
+
+# --- MAIN AREA ---
 col1, col2 = st.columns([2, 1])
 
 with col1:
     uploaded_files = st.file_uploader(
-        "📂 PDF Dosyalarını Buraya Yükle", 
-        type=["pdf"], 
-        accept_multiple_files=True
+        "📂 Upload PDF files",
+        type=["pdf"],
+        accept_multiple_files=True,
+        help="Upload one or more PDFs (articles, preprints, reports, etc.).",
     )
 
 with col2:
-    st.write("### ⚙️ İşlem Paneli")
+    st.write("### ⚙️ Processing Panel")
     if uploaded_files:
-        st.success(f"{len(uploaded_files)} dosya hazır.")
-        process_btn = st.button("Analizi Başlat ⚡", type="primary", use_container_width=True)
+        st.success(f"{len(uploaded_files)} file(s) ready.")
+        process_btn = st.button("Generate APA 7 Bibliography ⚡", type="primary", use_container_width=True)
     else:
-        st.info("Dosya bekleniyor...")
+        st.info("Waiting for PDF files...")
         process_btn = False
 
 if process_btn and uploaded_files:
-    with st.spinner(f"🚀 {selected_model} modeli çalışıyor... (Yedek: 2.0-Lite)"):
+    with st.spinner(f"🚀 Running model {selected_model} (fallback: gpt-4o-mini)..."):
         try:
-            # 1. Dosyaları Hazırla
+            # 1. Prepare files payload
             files_payload = [
-                ("files", (file.name, file.getvalue(), "application/pdf")) 
+                ("files", (file.name, file.getvalue(), "application/pdf"))
                 for file in uploaded_files
             ]
-            
-            # 2. Seçilen Modeli Backend'e Gönder
-            data_payload = {"model_id": selected_model}
 
-            # 3. İsteği At
+            # 2. Prepare form data payload
+            data_payload = {
+                "model_id": selected_model,
+                "arxiv_query": arxiv_query,
+                "arxiv_max_results": int(arxiv_max_results),
+            }
+
+            # 3. Send request to backend
             response = requests.post(
-                BACKEND_URL, 
-                files=files_payload, 
+                BACKEND_URL,
+                files=files_payload,
                 data=data_payload,
-                timeout=180 # Büyük modeller için süreyi uzattık
+                timeout=300,  # allow more time for arXiv + LLM
             )
 
-            # 4. Sonucu İşle
+            # 4. Handle response
             if response.status_code == 200:
                 st.balloons()
-                st.success("✅ İşlem Tamamlandı!")
-                
+                st.success("✅ Bibliography generated successfully!")
+
                 st.download_button(
-                    label="📥 APA 7 Word Dosyasını İndir",
+                    label="📥 Download APA 7 Word file",
                     data=response.content,
-                    file_name=f"kaynakca_{selected_model}.docx",
+                    file_name=f"references_{selected_model}.docx",
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    use_container_width=True
+                    use_container_width=True,
                 )
             else:
-                st.error(f"⚠️ Hata Oluştu: {response.status_code}")
+                st.error(f"⚠️ Error: {response.status_code}")
                 try:
                     st.json(response.json())
-                except:
+                except Exception:
                     st.write(response.text)
 
         except requests.exceptions.ConnectionError:
-            st.error("🚨 Sunucuya ulaşılamadı! Terminalde 'main.py' açık mı?")
+            st.error("🚨 Cannot reach backend! Is 'main.py' running in the terminal?")
         except Exception as e:
-            st.error(f"Beklenmeyen Hata: {e}")
+            st.error(f"Unexpected error: {e}")
